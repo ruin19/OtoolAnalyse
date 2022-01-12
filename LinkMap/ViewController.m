@@ -98,22 +98,15 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
             
             // 遍历selRefs移除methodsListDic，剩下的就是未使用的
             for (NSString *methodAddress in selRefsDic.allKeys) {
-                for (NSDictionary *methodDic in methodsListDic.allValues) {
-                    [methodDic setValue:nil forKey:methodAddress];
+                methodsListDic[methodAddress] = nil;
+            }
+            self.result = [@"方法地址\t方法名称\r\n\r\n" mutableCopy];
+            for (NSArray *classMethodName in methodsListDic.allValues) {
+                if (classMethodName.count == 2) {
+                    [self.result appendFormat:@"[%@ %@]\n", classMethodName[0], classMethodName[1]];
                 }
             }
             
-            // 遍历移除空的元素
-            NSMutableDictionary *resultDic = [NSMutableDictionary dictionary];
-            for (NSString *classNameStr in methodsListDic.allKeys) {
-                NSDictionary *methodDic = [methodsListDic valueForKey:classNameStr];
-                if (methodDic.count > 0) {
-                    [resultDic setValue:methodDic forKey:classNameStr];
-                }
-            }
-            
-            NSLog(@"多余的方法如下%@", resultDic);
-            [self buildResultWithDictionary:resultDic groupBtnState:groupButtonState];
         } else { // 查找多余的类
             // 所有classList类和类名字
             NSDictionary *classListDic = [self classListFromContent:content];
@@ -181,56 +174,83 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
     return selRefsResults;
 }
 
-// 获取所有方法集合 { className:{ address: methodName } }
+// 获取所有方法集合 {address: [className: methodName]}
 - (NSMutableDictionary *)allSelRefsFromContent:(NSString *)content {
     // 符号文件列表
     NSArray *lines = [content componentsSeparatedByString:@"\n"];
 
-    NSMutableDictionary *allSelResults = [NSMutableDictionary dictionary];
+    // {className: {address, methodName}}
+    NSMutableDictionary<NSString*, NSMutableDictionary<NSString *, NSString *> *> *allSelResults = [NSMutableDictionary dictionary];
     
     BOOL allSelResultsBegin = NO;
-    BOOL canAddName = NO;
-    BOOL canAddMethods = NO;
+    BOOL canAddName = NO;   // 开始扫描类名标记位
+    BOOL canAddMethods = NO; // 开始扫描方法标记位
+    BOOL canAddProperties = NO; // 开始扫描property标记位
     NSString *className = @"";
     
-    NSMutableDictionary *methodDic = [NSMutableDictionary dictionary];
+    // 暂存每个类里的方法: {address: methodName}
+    NSMutableDictionary<NSString *, NSString *> *methodDic = [NSMutableDictionary dictionary];
+    // 暂存每个类里的properties
+    NSMutableSet<NSString *> *properties = [NSMutableSet set];
     
     for (NSString *line in lines) {
         if ([line containsString:kConstPrefix] && [line containsString:kQueryClassList]) {
             allSelResultsBegin = YES;
             continue;
-        }
-        else if (allSelResultsBegin && [line containsString:kConstPrefix]) {
+        } else if (allSelResultsBegin && [line containsString:kConstPrefix]) {
             allSelResultsBegin = NO;
             break;
         }
         
         if (allSelResultsBegin) {
-            if ([line containsString:@"data"]) {
+            // 扫描到一个类的开头
+            if ([line containsString:@"data"] && [line containsString:@"__OBJC_"]) {
                 if (methodDic.count > 0) {
-                    [allSelResults setValue:methodDic forKey:className];
+                    // 处理上一个类的结果
+                    // 在方法列表中，过滤掉property，因为有些通过ivar访问的方式，扫描不到调用关系，会被误判为无用的property
+                    NSMutableArray *toBeRemovedKeys = [NSMutableArray array];
+                    for (NSString *key in methodDic.allKeys) {
+                        if ([properties containsObject:methodDic[key]]) {
+                            [toBeRemovedKeys addObject:key];
+                        }
+                    }
+                    [methodDic removeObjectsForKeys:toBeRemovedKeys];
+                    
+                    // 记录类和方法
+                    // 因为实例方法和类方法分别分布在类和元类里，对应的className可能已经有值了，需要添加进去
+                    if (allSelResults[className]) {
+                        [((NSMutableDictionary *)allSelResults[className]) addEntriesFromDictionary:methodDic];
+                    } else {
+                        allSelResults[className] = methodDic;
+                    }
+                    
+                    // 为新的类清空方法和属性
                     methodDic = [NSMutableDictionary dictionary];
+                    properties = [NSMutableSet set];
                 }
                 // data之后第一个的name，是类名
                 canAddName = YES;
                 canAddMethods = NO;
+                canAddProperties = NO;
                 continue;
             }
             
             if (canAddName && [line containsString:@"name"]) {
-                // 更新类名，用作标记{ className:{ address: methodName } }
+                // 更新类名
                 NSArray *components = [line componentsSeparatedByString:@" "];
                 className = [components lastObject];
                 continue;
             }
             
+            // 方法开始
             if ([line containsString:@"methods"] || [line containsString:@"Methods"]) {
-                // method之后的name是方法名，和方法地址
                 canAddName = NO;
                 canAddMethods = YES;
+                canAddProperties = NO;
                 continue;
             }
             
+            // 获取方法名和地址
             if (canAddMethods && [line containsString:@"name"]) {
                 NSArray *components = [line componentsSeparatedByString:@" "];
                 if (components.count > 2) {
@@ -240,9 +260,49 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
                 }
                 continue;
             }
+            
+            // property开始
+            if ([line containsString:@"baseProperties"]) {
+                canAddName = NO;
+                canAddMethods = NO;
+                canAddProperties = YES;
+                continue;
+            }
+            
+            // 获取property名和对应的setter名
+            if (canAddProperties && [line containsString:@"name"]) {
+                NSArray *components = [line componentsSeparatedByString:@" "];
+                if (components.count > 2) {
+                    NSString *propertyName = [components lastObject];
+                    if (propertyName.length != 0) {
+                        [properties addObject:propertyName];
+                        NSString *setterName = [propertyName stringByReplacingCharactersInRange:NSMakeRange(0, 1) withString:[[propertyName substringToIndex:1] uppercaseString]];
+                        setterName = [NSString stringWithFormat:@"set%@:", setterName];
+                        [properties addObject:setterName];
+                    }
+                }
+                continue;
+            }
+            
+            // 过滤掉protocol和ivars
+            if ([line containsString:@"baseProtocols"] || [line containsString:@"ivars"]) {
+                canAddName = NO;
+                canAddMethods = NO;
+                canAddProperties = NO;
+                continue;
+            }
         }
     }
-    return allSelResults;
+    
+    // 从{className: {address, methodName}} 转换成 {address: [className: methodName]} 为了后续跟调用关系比对时提高查找效率
+    NSMutableDictionary *allMethods = [NSMutableDictionary dictionary];
+    for (NSString *className in allSelResults.allKeys) {
+        NSDictionary *methods = allSelResults[className];
+        for (NSString *address in methods.allKeys) {
+            allMethods[address] = @[className, methods[address]];
+        }
+    }
+    return allMethods;
 }
 
 #pragma mark - 类分析
