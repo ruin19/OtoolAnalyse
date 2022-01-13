@@ -193,7 +193,8 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
     // 暂存每个类里的properties
     NSMutableSet<NSString *> *properties = [NSMutableSet set];
     
-    for (NSString *line in lines) {
+    for (NSString *originalLine in lines) {
+        NSString *line = [originalLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
         if ([line containsString:kConstPrefix] && [line containsString:kQueryClassList]) {
             allSelResultsBegin = YES;
             continue;
@@ -243,7 +244,7 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
             }
             
             // 方法开始
-            if ([line containsString:@"methods"] || [line containsString:@"Methods"]) {
+            if ([line containsString:@"baseMethods"]) {
                 canAddName = NO;
                 canAddMethods = YES;
                 canAddProperties = NO;
@@ -253,7 +254,7 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
             // 获取方法名和地址
             if (canAddMethods && [line containsString:@"name"]) {
                 NSArray *components = [line componentsSeparatedByString:@" "];
-                if (components.count > 2) {
+                if (components.count > 2 && [components[0] isEqualToString:@"name"]) {
                     NSString *methodAddress = components[components.count-2];
                     NSString *methodName = [components lastObject];
                     [methodDic setValue:methodName forKey:methodAddress];
@@ -272,7 +273,7 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
             // 获取property名和对应的setter名
             if (canAddProperties && [line containsString:@"name"]) {
                 NSArray *components = [line componentsSeparatedByString:@" "];
-                if (components.count > 2) {
+                if (components.count > 2 && [components[0] isEqualToString:@"name"]) {
                     NSString *propertyName = [components lastObject];
                     if (propertyName.length != 0) {
                         [properties addObject:propertyName];
