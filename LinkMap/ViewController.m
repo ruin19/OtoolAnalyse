@@ -186,12 +186,15 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
     BOOL canAddName = NO;   // 开始扫描类名标记位
     BOOL canAddMethods = NO; // 开始扫描方法标记位
     BOOL canAddProperties = NO; // 开始扫描property标记位
+    BOOL canAddProtocolMethods = NO; // 开始扫描协议方法标记位
     NSString *className = @"";
     
     // 暂存每个类里的方法: {address: methodName}
     NSMutableDictionary<NSString *, NSString *> *methodDic = [NSMutableDictionary dictionary];
     // 暂存每个类里的properties
     NSMutableSet<NSString *> *properties = [NSMutableSet set];
+    // 暂存每个类里遵循的协议的方法
+    NSMutableDictionary<NSString *, NSString *> *protocolMethods = [NSMutableDictionary dictionary];
     
     for (NSString *originalLine in lines) {
         NSString *line = [originalLine stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceCharacterSet]];
@@ -217,6 +220,13 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
                     }
                     [methodDic removeObjectsForKeys:toBeRemovedKeys];
                     
+                    // 过滤协议的方法
+                    for (NSString *key in methodDic.allKeys) {
+                        if (protocolMethods[key]) {
+                            methodDic[key] = nil;
+                        }
+                    }
+                    
                     // 记录类和方法
                     // 因为实例方法和类方法分别分布在类和元类里，对应的className可能已经有值了，需要添加进去
                     if (allSelResults[className]) {
@@ -228,11 +238,13 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
                     // 为新的类清空方法和属性
                     methodDic = [NSMutableDictionary dictionary];
                     properties = [NSMutableSet set];
+                    protocolMethods = [NSMutableDictionary dictionary];
                 }
                 // data之后第一个的name，是类名
                 canAddName = YES;
                 canAddMethods = NO;
                 canAddProperties = NO;
+                canAddProtocolMethods = NO;
                 continue;
             }
             
@@ -248,6 +260,7 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
                 canAddName = NO;
                 canAddMethods = YES;
                 canAddProperties = NO;
+                canAddProtocolMethods = NO;
                 continue;
             }
             
@@ -267,6 +280,7 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
                 canAddName = NO;
                 canAddMethods = NO;
                 canAddProperties = YES;
+                canAddProtocolMethods = NO;
                 continue;
             }
             
@@ -285,11 +299,32 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
                 continue;
             }
             
-            // 过滤掉protocol和ivars
-            if ([line containsString:@"baseProtocols"] || [line containsString:@"ivars"]) {
+            // 协议方法开始
+            if ([line containsString:@"_PROTOCOL_INSTANCE_METHODS_"]) {
                 canAddName = NO;
                 canAddMethods = NO;
                 canAddProperties = NO;
+                canAddProtocolMethods = YES;
+                continue;
+            }
+            
+            // 获取协议的方法名和地址
+            if (canAddProtocolMethods && [line containsString:@"name"]) {
+                NSArray *components = [line componentsSeparatedByString:@" "];
+                if (components.count > 2 && [components[0] isEqualToString:@"name"]) {
+                    NSString *methodAddress = components[components.count-2];
+                    NSString *methodName = [components lastObject];
+                    [protocolMethods setValue:methodName forKey:methodAddress];
+                }
+                continue;
+            }
+            
+            // 过滤掉protocol和ivars
+            if ([line containsString:@"baseProtocols"] || [line containsString:@"instanceProperties"] || [line containsString:@"ivars"]) {
+                canAddName = NO;
+                canAddMethods = NO;
+                canAddProperties = NO;
+                canAddProtocolMethods = NO;
                 continue;
             }
         }
