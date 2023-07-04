@@ -113,11 +113,11 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
             // 所有引用的类
             NSArray *classRefs = [self classRefsFromContent:content];
     //        // 所有引用的父类
-    //        NSArray *superRefs = [self superRefsFromContent:content];
+            NSArray *superRefs = [self superRefsFromContent:content];
             
             // 先把类和父类数组做去重
             NSMutableSet *refsSet = [NSMutableSet setWithArray:classRefs];
-    //        [refsSet addObjectsFromArray:superRefs];
+            [refsSet addObjectsFromArray:superRefs];
             
             // 所有在refsSet中的都是已使用的，遍历classList，移除refsSet中涉及的类
             // 余下的就是多余的类
@@ -352,21 +352,27 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
 
     BOOL classRefsBegin = NO;
     
+    int lineNum = 0;
     for(NSString *line in lines) {
-       if ([line containsString:kConstPrefix] && [line containsString:kQueryClassRefs]) {
+        ++lineNum;
+        if ([line containsString:kConstPrefix] && [line containsString:kQueryClassRefs]) {
             classRefsBegin = YES;
+            NSLog(@"classrefs begin line num %d", lineNum);
             continue;;
         }
         else if (classRefsBegin && [line containsString:kConstPrefix]) {
             classRefsBegin = NO;
+            NSLog(@"classrefs end line num %d", lineNum);
             break;
         }
         
         if(classRefsBegin && [line containsString:@"000000010"]) {
             NSArray *components = [line componentsSeparatedByString:@" "];
-            NSString *address = [components lastObject];
-            if ([address hasPrefix:@"0x100"]) {
-                [classRefsResults addObject:address];            }
+            [components enumerateObjectsUsingBlock:^(NSString *component, NSUInteger idx, BOOL * _Nonnull stop) {
+                if ([component hasPrefix:@"0x10"]) {
+                    [classRefsResults addObject:component];
+                }
+            }];
         }
     }
 
@@ -383,21 +389,26 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
 
     BOOL classSuperRefsBegin = NO;
 
+    int lineNum = 0;
     for(NSString *line in lines) {
+        ++lineNum;
         if ([line containsString:kConstPrefix] && [line containsString:kQuerySuperRefs]) {
             classSuperRefsBegin = YES;
+            NSLog(@"superrefs begin line num %d", lineNum);
             continue;;
         }
         else if (classSuperRefsBegin && [line containsString:kConstPrefix]) {
             classSuperRefsBegin = NO;
+            NSLog(@"superrefs end line num %d", lineNum);
             break;
         }
-        if(classSuperRefsResults && [line containsString:@"000000010"]) {
+        if(classSuperRefsBegin && classSuperRefsResults && [line containsString:@"000000010"]) {
             NSArray *components = [line componentsSeparatedByString:@" "];
-            NSString *address = [components lastObject];
-            if ([address hasPrefix:@"0x100"]) {
-                [classSuperRefsResults addObject:address];
-            }
+            [components enumerateObjectsUsingBlock:^(NSString *component, NSUInteger idx, BOOL * _Nonnull stop) {
+                if ([component hasPrefix:@"0x10"]) {
+                    [classSuperRefsResults addObject:component];
+                }
+            }];
         }
     }
     NSLog(@"\n\n__objc_superrefs总结如下，共有%ld个\n%@：", classSuperRefsResults.count, classSuperRefsResults);
@@ -429,7 +440,7 @@ static NSString *kQuerySelRefs = @"__objc_selrefs";
         if (classListBegin) {
             if([line containsString:@"000000010"]) {
                 NSArray *components = [line componentsSeparatedByString:@" "];
-                NSString *address = [components lastObject];
+                NSString *address = components[1];
                 addressStr = address;
                 canAddName = YES;
             }
